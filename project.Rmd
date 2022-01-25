@@ -1,0 +1,901 @@
+---
+title: "大作业——共享单车"
+author: "胡正阳,牛子涵"
+date: "2021/12/27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+## 大作业
+
+### 准备工作
+
+```{r collapse=TRUE, results='hold'}
+  # 清除工作环境
+  cat("\014"); rm(list=ls())
+```
+
+```{r collapse=TRUE, results='hold'}
+  # 载入R包
+  library(ggplot2) #画图
+  library(reshape2)#画图
+  library(lubridate) #处理时间数据
+  library(MASS)
+  library(tibble)
+  library(fitdistrplus) #检验数据是否服从给定的分布
+  library(qqplotr)
+  library(ggmap)
+  library(baidumap)
+```
+
+### 分工：
+
+#### 胡正阳：任务二、四、五
+
+#### 牛子涵：任务三、六、七
+
+### 任务一
+
+清洗数据，删除不正确的数据并在trip表中加入distance，age列表明骑行距离与用户年龄。并将starttime与stoptime中时间替换为标准形式
+
+我们使用python中的包geomtry对站点之间的距离进行了计算了，也就获得了每一段trip的骑行距离的一个粗略表示，虽然这并非真实骑行距离，但二者呈正相关，所以不妨用此数据来代替。我们在Trip表后新加一列distance表示骑行距离，产生的新文件为trips_final.
+
+详情见distance.py。
+
+```{r}
+trip <- read.csv("Trips.csv",header=T)
+Station <- read.csv("Stations.csv",header=T)
+distance <- read.csv("distance.csv",header=T)
+ #分别读入Trips,Stations和distance至trip,Station,distance
+Trip <- cbind(trip,distance)
+ #合并·Trips和distance得到数据框Trip,
+```
+
+```{r}
+  # 增加年龄
+  Trip[, "age"] <- 2016 - Trip[, "birthyear"] + 1
+```
+
+```{r}
+  summary(Trip$age)
+  summary(Trip$tripduration)
+```
+
+可以看出年龄数据中存在百岁以上的老人，这显然不合理，于是将年龄超过100岁的数据删去。
+并且有少量订单时长过长，超过了5个小时，也不合理，于是将骑行时间过长的数据删去。
+
+```{r}
+  Trip <- Trip[(Trip$age<=100|is.na(Trip$age)) & Trip$tripduration<=18000, ]
+  summary(Trip$age)
+  summary(Trip$tripduration)
+```
+替换Trip表中时间数据为标准形式。
+```{r}
+Trip$starttime <- as.POSIXct(mdy_hm(Trip$starttime))
+Trip$stoptime <- as.POSIXct(mdy_hm(Trip$stoptime))
+```
+
+
+### 任务二
+
+引入公共自行车站点与行程数据，并根据数据分析骑行距离、时间和年龄的关系。
+
+由少部分乘客骑车一圈后回到出发站点，则算出骑行距离为0，忽略此部分数据，并去掉没有年龄或骑行时长的数据
+
+```{r}
+  Trip2 <- Trip[Trip$distance.of.trip>0 & !is.na(Trip$age) & !is.na(Trip$tripduration),]
+```
+
+下分析年龄分布与骑行时长分布
+
+```{r}
+  # 骑行时长分布图
+  ggplot(data = Trip2, aes(x = tripduration)) + 
+  geom_histogram(binwidth = 5, aes(y=..density..), fill = "white", col = "black") + 
+  geom_density(alpha=0.3, fill="blue")+ggtitle("骑行时长分布") + 
+  theme(plot.title = element_text(hjust = 0.5)) + coord_trans(x="log10")
+```
+
+```{r}
+  # 年龄分布图
+  ggplot(data = Trip2, aes(x = age)) + 
+  geom_histogram(binwidth = 5, aes(y=..density..), fill = "white", col = "black") + 
+  geom_density(alpha=0.3, fill="green") + 
+  ggtitle("年龄分布") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r collapse=TRUE}
+  fit2 <- fitdist(Trip2$age,"gamma",method = "mme")
+  plot(fit2, col="blue")
+```
+
+可以看出，年龄近似服从Gamma分布
+
+```{r}
+  # 按年龄计算骑行距离、时间、速度、平均值
+  Trip2[,"speed"] <- 1000*Trip2[,"distance.of.trip"]/Trip2[,"tripduration"]   
+  # 对Trip2表中每个数据计算速度 
+  d1 <- aggregate(Trip2[,c("tripduration","distance.of.trip","speed")], by = Trip2["age"], mean)
+  head(d1,6)
+```
+
+```{r}
+  # 绘制年龄与骑车平均距离的关系
+  ggplot(d1, aes(x=age, y=distance.of.trip)) + 
+  geom_line( col = "blue", size = 1.3) + 
+  ggtitle("年龄——行车距离折线图") + theme(plot.title = element_text(hjust = 0.5))
+```
+```{r}
+  # 绘制年龄与骑车平均速度的关系
+  ggplot(d1, aes(x=age, y=speed)) + 
+  geom_line( col = "red", size = 1.3) + 
+  ggtitle("年龄——行车速度折线图") + theme(plot.title = element_text(hjust = 0.5))
+```
+```{r}
+  # 绘制年龄与骑车平均时长的关系
+  ggplot(d1, aes(x=age, y=tripduration)) + 
+  geom_line( col = "green", size = 1.3) + 
+  ggtitle("年龄——行车时长折线图") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+通过上述三个图可以看出，总体上骑行的速度是随着年龄的增大而减小的，这与老年人身体状况不如年轻人这一事实相吻合。但由于年龄大于70岁的样本数量较少，于是在统计平均速度与时长时会有一定偏差。这也导致了上图年龄大于70岁时速度、距离、时长大幅摆动。
+
+计算年龄与行车速度的协方差。
+
+```{r}
+  cor.obt <- cor(Trip2$age,Trip2$speed)
+  cat("协方差是： ",cor.obt,'\n')
+```
+
+###任务三
+
+这里我们对有关自行车的数据进行处理。
+
+我们给出可以提取每辆车的信息的函数info_bik,输入自行车的id后，我们可以得知这辆自行车在4月份的使用信息，并可以给出相应的建议。
+ 
+```{r}
+info_bik<-function(k){
+#编号为k的自行车的信息
+  cat("编号为",k,"的单车的4月份订单数为：",length(which(Trip$bikeid==k)),"\n")
+  cat("编号为",k,"的单车的4月份使用时长为：",sum(Trip$tripduration[which(Trip$bikeid==k)]),"秒 \n")
+  cat("编号为",k,"的单车的4月份公里数为：",sum(Trip$distance.of.trip[which(Trip$bikeid==k)]),"\n")
+}
+info_bik(1)
+```
+
+接下来我们考察自行车的各项信息的整体分布。
+
+```{r}
+bik_id <- unique(Trip$bikeid)
+bik_trip <- numeric(length(bik_id)) #定义bik_trip以储存每辆自行车的订单数
+bik_time <- numeric(length(bik_id)) #定义bik_time以储存每辆自行车的使用时长
+bik_dis <- numeric(length(bik_id)) #定义bik_dis以储存每辆自行车的里程数
+
+for(i in 1:length(bik_id)){ #我们对上面定义的数组进行赋值
+  bik_trip[i] <- length(which(Trip$bikeid==bik_id[i]))
+  bik_time[i] <- sum(Trip$tripduration[which(Trip$bikeid==bik_id[i])])
+  bik_dis[i] <- sum(Trip$distance.of.trip[which(Trip$bikeid==bik_id[i])])
+} 
+
+bik<-cbind.data.frame(bik_id,bik_trip,bik_time,bik_dis)
+#合并各项信息于bik
+```
+
+下面我们对于每一项信息的整体分布进行绘图并判断它服从的分布。我们首先画出它的直方图并叠加密度曲线，由此，我们可以对它的分布有一个大致的判断，接着我们调用fitdist函数可以验证我们的判断，并给出最接近的分布的参数。
+
+#bik_trip
+```{r}
+ggplot(bik,aes(x=bik_trip))+geom_histogram(aes(y=..density..),color="black",fill="white")+geom_density(alpha=0.2,fill="red")
+```
+
+可以看出该数据近似服从正态分布，下面我们对它进行检验。
+
+```{r collapse=TRUE}
+fitNorm_1<-fitdist(bik_trip,"norm",method = "mme")
+summary(fitNorm_1)
+plot(fitNorm_1,col="red")
+```
+
+根据qq图和pp图可以看到确实符合正态分布,具体的参数可见summary。
+
+#bik_time
+```{r}
+ggplot(bik,aes(x=bik_time))+geom_histogram(aes(y=..density..),color="black",fill="white")+geom_density(alpha=0.2,fill="green")
+```
+
+可以看出该数据近似服从正态分布，下面我们对它进行检验。
+
+```{r collapse=TRUE}
+fitNorm_2 <- fitdist(bik_time, "norm", method = "mme")
+summary(fitNorm_2)
+plot(fitNorm_2,col="green")
+```
+
+根据qq图和pp图可以看到确实符合正态分布,具体的参数可见summary。
+
+#bik_dis
+```{r}
+ggplot(bik,aes(x=bik_dis))+geom_histogram(aes(y=..density..),color="black",fill="white")+geom_density(alpha=0.2,fill="blue")
+```
+
+可以看出该数据近似服从正态分布，下面我们对它进行检验。
+
+```{r collapse=T}
+fitNorm_3 <- fitdist(bik_dis, "norm",method = "mme")
+summary(fitNorm_3)
+plot(fitNorm_3,col="blue")
+```
+
+根据qq图和pp图可以看到确实符合正态分布,具体的参数可见summary。
+
+### 任务四
+
+从网上下载数据集中站点所在地地图，并且在地图中用散点图绘画出各个站点位置与订单频率。
+
+提取Trip数据集中站点进出的自行车数量信息，放入新表geodata中以便画图
+```{r}
+  geodata <- Station[, c("id","latitude", "longitude")]
+  for (i in Station$id) {
+    geodata[i,"Out"] <- nrow(Trip[Trip$from_station_id==i,]) # 4月份从该站点出去的车辆数
+    geodata[i,"In"] <- nrow(Trip[Trip$to_station_id==i,]) # 4月份到达该站点的车辆数
+    geodata[i,"Count"] <- geodata[i,"In"] + geodata[i,"Out"]
+  }
+  geodata <- geodata[!is.na(geodata$id),]
+  geodata[is.na(geodata$Count),c("Count","In","Out")] <- 0
+  geodata[,"capacity"] <- Station$dpcapacity
+  head(geodata,5)
+```
+
+注册百度API key用于下载地图数据
+
+```{r}
+  options(baidumap.key = "iqlhuUWfsVwkrotbZfoofjUi9t6Azfn8")
+```
+
+计算站点经纬度的范围便于绘图
+
+```{r}
+  latitude1 <- min(geodata$latitude)/2 + max(geodata$latitude)/2;latitude1
+  longitude1 <- min(geodata$longitude)/2 + max(geodata$longitude)/2;longitude1
+  cat("维度范围：",min(geodata$latitude),max(geodata$latitude))
+  cat("经度范围：",min(geodata$longitude),max(geodata$longitude))
+```
+
+通过baidumap包下载数据集中站点位置的地图，并使用ggmap绘制地图。
+
+```{r}
+  map <- getBaiduMap(c(-87.67613,41.91028), zoom=10, messaging = F)
+  ggmap(map)
+```
+
+在地图中绘制站点分布
+
+```{r}
+  plotmap1 <- ggmap(map) + 
+           geom_jitter(data = geodata,aes(x=longitude,y=latitude),pch=16,alpha=0.2,col = "red") + 
+           labs(x='Longitude',y='Latitude')
+  plotmap1
+```
+
+绘制站点与订单数多少的图像。
+
+```{r}
+  plotmap2 <- ggmap(map) + 
+           geom_jitter(data = geodata,aes(x=longitude,y=latitude,size=Count),pch=16,alpha=0.2,col =   "red") + 
+           labs(x='Longitude',y='Latitude')
+  plotmap2
+```
+
+绘制4月份一次订单也没有的站点分布图像
+
+```{r}
+  geodata0 <- geodata[geodata$Count==0,]
+  plotmap3 <- ggmap(map) + 
+           geom_jitter(data = geodata0,aes(x=longitude,y=latitude),pch=16,alpha=1,col = "red") + 
+           labs(x='Longitude',y='Latitude')
+  plotmap3
+```
+
+
+### 任务五
+
+先选取特定站点，绘制其在一天内的自行车数量随时间的变化情况。后将该方法推广写成一函数获得任意站点任意一天内共享单车数量净变化情况与时间的关系。
+
+下面以ID为35的站点为例，事实上该站点是订单数最多的站点
+
+```{r collapse=TRUE, results='hold'}
+  # p1表示以35为出发站的订单数据
+  p1 <- Trip[Trip$from_station_id==35,]
+  # p2表示以35为到达站的订单数据
+  p2 <- Trip[Trip$to_station_id==35,]
+```
+
+下面先对4月1日当天进行考察
+
+```{r}
+  # 筛选4月1日当天的数据并按时间先后重新排序
+  p11 <- p1[day(p1$starttime) == 1,c(1,2,3,6,8)]
+  p21 <- p2[day(p2$stoptime) == 1,c(1,2,3,6,8)]
+  p11 <- p11[order(p11$stoptime),] # 4月1号这天从该站点出发的车
+  p21 <- p21[order(p21$stoptime),] # 4月1号这天到达该站点的车
+  head(p11,5)
+```
+
+```{r}
+  # 绘制该天出发的车量
+  p11[,"number"] <- 1:42
+  p21[,"number"] <- 1:59
+  pic1 <- ggplot(p11, aes(x=starttime,y=number)) +
+        geom_line(col = "red", size = 1.3) +
+        xlab("时间") +
+        ylab("从35号站点出发的车数量") +
+        ggtitle("4月1日从35号站点出发的车数量与时间关系折线图") +
+        theme(plot.title = element_text(hjust = 0.5)) 
+  pic1
+  pic2 <- ggplot(p21, aes(x=stoptime,y=number)) + 
+        geom_line(col = "blue", size = 1.3) +
+        xlab("时间") +
+        ylab("到达35号站点的车数量") +
+        ggtitle("4月1日到达35号站点的车数量与时间关系折线图") +
+        theme(plot.title = element_text(hjust = 0.5))
+  pic2
+```
+
+```{r}
+  # 绘制35号站点4月1日当天进出的关系图
+  pic3 <- ggplot() +
+          geom_line(aes(x=p11$stoptime,y=p11$number), col = "red", size = 1.3) +
+          geom_line(aes(x=p21$stoptime,y=p21$number), col = "blue", size = 1.3, show.legend = T) +
+          xlab("时间") +
+          ylab("从35号站点出发与到达的车数量变化") +
+          ggtitle("4月1日从35号站点出发与到达的车数量与时间关系折线图") +
+          theme(plot.title = element_text(hjust = 0.5)) 
+  pic3
+```
+
+下面根据4月1号进出站的数据绘制车辆变化随时间变化图
+
+```{r}
+# 绘制车辆变化随时间的变化
+# 从该站出发的车
+p11[,"number"] <- -(1:42) # 将从该站点出去的车设为负值 
+# 在p11,p21表中增加新列表示对应时间车辆数的净变化值
+for (i in 1:42) {
+  p11[i,"transform"] <- p11[i,"number"] + nrow(p21[p21$stoptime < p11[i,"starttime"],])
+}
+for (i in 1:59) {
+  p21[i,"transform"] <- p21[i,"number"] - nrow(p11[p11$starttime < p21[i,"stoptime"],])
+}
+```
+
+```{r}
+  # 合并数据并绘图
+  p11[,"time"] <- p11$starttime
+  p21[,"time"] <- p21$stoptime
+  pmerge1 <- rbind(p11,p21)
+  ggplot(pmerge1, aes(x = time, y = transform)) + 
+    geom_line(col = "green",size = 1.3) +
+    xlab("时间") +
+    ylab("减少的车数量") +
+    ggtitle("4月1日35号站点减少的车数量与时间关系折线图") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+下面将上面的方法推广，写出一个统计任一站点每一天的共享单车随时间变化的函数。
+注意要考虑没有订单数据的站点导致函数报错.该函数返回一个数据框记录每个时间点车站净减少的车的数量。
+
+```{r}
+  # 一个函数显示每日1固定站点车辆变化情况与时间的关系
+  # i日期,ID车站号
+  daycount <- function(i,ID){
+    if(!ID %in% Station$id){
+      cat("该站点信息没有记录！")
+      return(-1)
+    }
+    if(!i %in% 1:30){
+      cat("没有该天数的数据！")
+      return(-1)
+    }
+    station1 <- Station[Station$id==ID,]
+    ip1 <- Trip[Trip$from_station_id==ID,]
+    ip2 <- Trip[Trip$to_station_id==ID,]
+    trip1 <- ip1
+    trip2 <- ip2
+    trip1i <- trip1[day(trip1$starttime) == i,c(1,2,3,6,8)]
+    trip2i <- trip2[day(trip2$stoptime) == i,c(1,2,3,6,8)]
+    trip1i <- trip1i[order(trip1i$starttime),] # 4月i号这天从该站点出发的车
+    trip2i <- trip2i[order(trip2i$stoptime),]
+    
+    l1 <- nrow(trip1i)
+    l2 <- nrow(trip2i)
+    
+    trip1i[,"number"] <- -(1:l1)
+    trip2i[,"number"] <- 1:l2
+
+    if(l1>0){ # 注意站点订单数量为不为0
+      trip1i[,"number"] <- -c(1:l1)  
+      for (i in 1:l1) {
+      trip1i[i,"transform"] <- trip1i[i,"number"] + nrow(trip2i[trip2i$stoptime <   trip1i[i,"starttime"],])
+      }
+      trip1i[,"time"] <- trip1i$starttime
+    }
+    if(l2>0){
+      trip2i[,"number"] <- c(1:l2)
+      for (i in 1:l2) {
+      trip2i[i,"transform"] <- trip2i[i,"number"] - nrow(trip1i[trip1i$starttime < trip2i[i,"stoptime"],])
+      }
+      trip2i[,"time"] <- trip2i$stoptime
+    }
+    
+    trip1i[,"time"] <- trip1i$starttime
+    trip2i[,"time"] <- trip2i$stoptime
+    tripmerge <- rbind(trip1i,trip2i)
+    if(nrow(tripmerge)>0){
+      count <- tripmerge[order(tripmerge$time),c("time","transform")]
+    }
+    return(count)
+  }
+
+```
+
+```{r}
+daycount(3,20)
+```
+
+```{r}
+  # 统计一个月内车辆随时间的变化情况
+  allcount <- function(ID){
+    if(!ID %in% Station$id){
+      cat("该站点信息没有记录！")
+      return(-1)
+    }
+    station1 <- Station[Station$id==ID,]
+    ip1 <- Trip[Trip$from_station_id==ID,]
+    ip2 <- Trip[Trip$to_station_id==ID,]
+    trip1 <- ip1
+    trip2 <- ip2
+    trip1 <- trip1[order(trip1$starttime),] # 4月i号这天从该站点出发的车
+    trip2 <- trip2[order(trip2$stoptime),]
+    
+    l1 <- nrow(trip1)
+    l2 <- nrow(trip2)
+    
+    trip1$transform<-numeric(l1)
+    trip2$transform<-numeric(l2)
+    
+    if(l1>0){
+      trip1[,"number"] <- -c(1:l1)  
+      for (i in 1:l1) {
+      trip1[i,"transform"] <- trip1[i,"number"] + nrow(trip2[trip2$stoptime <   trip1[i,"starttime"],])
+      }
+      trip1[,"time"] <- trip1$starttime
+    }
+    if(l2>0){
+      trip2[,"number"] <- c(1:l2)
+      for (i in 1:l2) {
+      trip2[i,"transform"] <- trip2[i,"number"] - nrow(trip1[trip1$starttime < trip2[i,"stoptime"],])
+      }
+      trip2[,"time"] <- trip2$stoptime
+    }
+    
+    tripmerge <- rbind(trip1,trip2)
+   
+    if(nrow(tripmerge)>0){
+      count <- tripmerge[order(tripmerge$time),c("time","transform")]
+      return(count)
+    }else{
+      count <- data.frame(time=0,transform=0)
+      return(count)
+    }
+    
+  }
+```
+```{r}
+  head(allcount(2),4)
+```
+
+下面给出了所有在4月份内有订单数的站点,s1表示有订单的站点,s2表示4月份一直没有订单的站点。
+
+```{r}
+trips_sum<-numeric(length(Station$id))
+for(i in 1:length(Station$id)){
+  trips_sum[i]<-length(which(Trip$from_station_id==Station$id[i]|Trip$to_station_id==Station$id[i]))
+}
+s1 <- Station$id[which(trips_sum>0)]
+s2 <- Station$id[which(trips_sum==0)]
+```
+
+```{r}
+  min_beginning <- numeric(nrow(Station))
+  for (i in s1) {
+    min_beginning[i] <- ifelse( min(allcount(i)$transform)<0, -min(allcount(i)$transform), 0)
+  }
+  min_beginning[s2] <- 0
+```
+
+```{r}
+head(min_beginning)
+```
+
+这里给出了每个站点在一个月中减少的自行车数量的最大值，也即在4月1日凌晨开始之时每个站点所需要拥有的自行车数量的最小值。
+
+但根据粗略观察即可知，有小部分站点所需要的初始自行车数量远大于其站点容量。查阅谷歌地图可知，数据集中的站点位于芝加哥城市内，芝加哥还有许多站点没有被数据集收录。这些站点为这些超过容量的站点提供了车辆。
+下图绘制了这样的站点的位置分布。
+
+```{r}
+  plotmap4 <- ggmap(map) + 
+           geom_jitter(data = geodata[geodata$capacity < min_beginning,],aes(x=longitude,y=latitude),
+                       pch=16,alpha=1,col = "red") + 
+           labs(x='Longitude',y='Latitude')
+  plotmap4
+```
+
+
+### 任务六
+
+在这个任务里我们考虑订单的次数与时间的关系。并写函数根据订单的时间计算每天的骑行峰值。
+
+首先我们考虑4月份内每一天订单总数与日期的关系。经过初步的分析可以知道35号站点作为所有站点中总订单数最多的站点，它的结果对于我们而言更有指导意义，因此我们考虑对它及其周围1km内的站点进行分析处理。我们选取1km为界限，这是因为我们认为1km内的区域可以代表35号站点周围居民的出行情况，这也可以为他们的出行提供一些建议。对于其他区域，我们完全可以使用相同的方法处理。
+
+```{r}
+x<-which(Trip$distance.of.trip<1&Trip$from_station_id==35)
+y<-which(Trip$distance.of.trip<1&Trip$to_station_id==35)
+z<-union(unique(Trip$to_station_id[x]),unique(Trip$from_station_id[y]))#提取35号站点周围1km内的所有站点的id,下面我们主要研究该区域内的问题
+```
+
+我们首先考虑总订单数在4月份每一天的变化，寻找该区域4月份的出行高峰时间。我们首先作出4月份该区域各站点的订单数量与日期关系折线图如下。
+
+```{r}
+ A<-matrix(0,nrow = 30*length(z),ncol=3)
+ for(i in 1:length(z)){
+  A[(30*i-29):(30*i),1]<-c(1:30)
+  A[(30*i-29):(30*i),3]<-c(z[i]:z[i])
+  for(j in 1:30){
+    A[30*i-30+j,2] <- length(which((day(Trip$starttime)==j&Trip$from_station_id==z[i])|(day(Trip$stoptime )==j & Trip$to_station_id==z[i])))
+  }
+ }#我们首先创建一个300*3的矩阵，每一列分别填入日期，订单总数和站点id
+
+ data_2<-as.data.frame(A)
+ colnames(data_2)<-c("day","trip","id")
+ #转为数据框并重新命名列
+
+  ggplot(data_2, aes(x = day, y = trip, fill =as.factor(id))) +
+  geom_area()+
+  scale_fill_brewer(palette = "Blues", breaks = as.factor(data_2$id))+
+  guides(fill=guide_legend(title="站点id"))+
+  xlab("日期")+ylab("订单总数")+
+  ggtitle("4月份该区域站点的订单数量与日期关系折线图") +
+  theme(plot.title = element_text(hjust = 0.5))
+  #作图画出站点订单数的折线图
+```
+
+我们可以明显看到该区域站点的订单的变化趋势是基本一致的，在4月15日到4月18日与4月22日到4月25日间订单最为集中，可以认为这正是订单发生的高峰期。我们由此得出该区域的出行高峰时段，我们可以建议居民在该时间段内可以选择其他方式出行，政府相关部门也应该在这几天集中投入人力，加快车辆循环，加强维护。
+
+下面我们分别讨论每个站点自行车在每一天的驶出情况与驶入情况，由此我们可以给出更为精确的建议。
+
+我们首先考虑驶出情况与日期，站点的关系，并且得到这个站点当天的驶出峰值。这里我们对于峰值的定义是如果密度曲线上一点处左右导数符号相异，我们认为它是一个驶出高峰期。
+
+```{r}
+ #这里我们把每个站点每一天的自行车驶出情况写为一个关于日期，站点编号的函数，并且返回这天该站点的驶出峰值对应的时间
+  day_out<-function(k,n){
+   #4月的第k天驶出的情况,起始站为n
+   time_point <- strptime("2016-04-01 00:00:00","%Y-%m-%d %H:%M:%S")+ddays(k-1)+900*0:96
+    #初始化出时间节点，我们以15min为一个间隔将全天分割为96个间隔
+   x <- which(day(Trip$starttime)==k&Trip$from_station_id==n)
+    #x代表着第k天驶入的订单在表中的位置
+   data_0 <- Trip[x,]
+   if(length(x)>3){
+    #如果一个站点每天的驶出订单数少于3，则不予考虑
+   time_period<-numeric(length(x))
+    #定义time_period记录每个订单所处的时间段
+   for(i in 1:length(x)){
+    for(j in 1:96){
+     if(int_length(interval(data_0$starttime[i],time_point[j]))+28800<=0)#由于两个时间记录分别为UTC和 CST,故利用+28800来抵消影响
+      if(int_length(interval(data_0$starttime[i],time_point[j+1]))+28800>0){
+         time_period[i]<-j
+         #记录第i笔订单发生于第j个时间间隔
+         }
+     }
+  }
+    data<-data.frame(time_period)
+    c<-numeric(200)
+    d<-diff(density(time_period)$y)
+    #将密度曲线的导数读入d
+    j=1
+    for(i in 1:(length(d)-1)){
+      if(d[i]>0&d[i]*d[i+1]<0){ 
+        #如果一点处左右导数符号相异，我们认为它是一个驶出高峰期
+          c[j]<-density(time_period)$x[i]
+          #将高峰期对应的时间写入c
+          j<-j+1
+         }
+    }
+    c<-c[1:j-1]
+    #只保留c中非零部分
+    p<-ggplot(data,aes(x=time_period))+
+    geom_histogram(aes(y=..density..),color="black",fill="white")+
+    geom_density(alpha=0.2,fill="green")+
+    xlab("时间段")+
+    ylab("密度")+
+    ggtitle("站点的驶入订单数量与时间关系折线图") +
+    theme(plot.title = element_text(hjust = 0.5))
+    #作出驶出订单情况并叠加密度曲线
+    d<-list(c,p)
+    d
+    #输出为一张列表，包含高峰时期以及一张关系图
+   }
+  else{
+    return(-1)
+    #后面的处理中-1可以帮我们识别哪些站点的利用率很低
+  }
+}#函数结束
+ day_out(1,35)
+ #测试35号站点4月1号的订单情况
+```
+
+根据上面的函数，我们可以来估计一个站点在4月份的出行高峰。我们将这个站点每一天的出行高峰收集下来进行绘制直方图，密度曲线上的最大值对应的时间点就是高峰时期的一个很好的估计。
+
+```{r}
+#这里我们写出一个函数peak_out用来统计站点n在4月份的出行高峰统计
+peak_out <- function(n){
+  c <- numeric(1000)
+  j=1
+  for(i in 1:30){
+    d<-day_out(i,n)
+    #把第i天的情况读入d
+    if(length(d)==2){
+      #如果这一天的订单数大于3我们才考虑
+      for(k in 1:length(d[[1]])){
+        c[j+k-1]<- d[[1]][k]
+        #记录下每一个高峰值出现的时间
+    }
+      j<-j+length(d[[1]])
+    }
+  }
+  if(length(which(c!=0))>3){
+    #只有在一个月内多次出现高峰我们才加以处理
+    c<-c[which(c!=0)]
+    u<-data.frame(c)
+
+    d<-density(u$c)
+    maxDens <- which.max(d$y)
+    v<-d$x[maxDens]
+    #寻找到密度曲线的最大点，这就是一个月内出现最多的高峰点，我们有理由相信这就是这个站点的出行高峰时间段
+    p<-ggplot(u,aes(x=c))+
+    geom_histogram(aes(y=..density..),color="black",fill="white")+
+    geom_density(alpha=0.2,fill="green")+
+    geom_vline(xintercept = d$x[maxDens],colour="red",linetype="dashed") 
+    #画出高峰的分布图并叠加密度曲线
+    e<-list(v,p)
+    e
+    #输出为一张列表，包含高峰时期以及一张关系图
+}
+else{
+  return(-1)
+  #返回-1说明没有高峰点
+ }
+}
+peak_out(35)
+#以35号站点为例测试
+```
+
+和上面完全类似我们讨论驶入情况。
+
+我们首先考虑驶入情况与日期，站点的关系，并且得到这个站点当天的驶入峰值。这里我们对于峰值的定义是如果密度曲线上一点处左右导数符号相异，我们认为它是一个驶入高峰期。
+
+```{r}
+  #这里我们把每个站点每一天的自行车驶入情况写为一个关于日期，站点编号的函数
+  day_in<-function(k,n){
+   #4月的第k天驶入的情况,终点站为n
+   time_point<-strptime("2016-04-01 00:00:00","%Y-%m-%d %H:%M:%S")+ddays(k-1)+900*0:96
+    #初始化出时间节点，我们以15min为一个间隔将全天分割为96个间隔
+   x<-which(day(Trip$stoptime)==k&Trip$to_station_id==n)
+    #x代表着第k天驶入的订单在表中的位置
+   data_0<-Trip[x,]
+   if(length(x)>3){
+    time_period<-numeric(length(which(day(Trip$stoptime)==k & Trip$to_station_id==n)))
+    #定义time_period记录每个订单所处的时间段
+    for(i in 1:length(x)){
+     for(j in 1:96){
+      if(int_length(interval(data_0$stoptime[i],time_point[j]))+28800<=0)#由于两个时间记录分别为UTC和 CST,故利用+28800来抵消影响
+      if(int_length(interval(data_0$stoptime[i],time_point[j+1]))+28800>0){
+         time_period[i]<-j
+         }
+     }
+  }
+    data<-data.frame(time_period)
+    c<-numeric(200)
+      d<-diff(density(time_period)$y)
+      j=1
+      for(i in 1:(length(d)-1)){
+        if(d[i]>0&d[i]*d[i+1]<0){
+        c[j]<-density(time_period)$x[i]
+         j<-j+1
+         }
+    }
+    c<-c[1:j-1]
+    p<-ggplot(data,aes(x=time_period))+
+    geom_histogram(aes(y=..density..),color="black",fill="white")+
+    geom_density(alpha=0.2,fill="green")+
+    xlab("时间段")+
+    ylab("密度")+
+    ggtitle("站点的驶入订单数量与时间关系折线图") +
+    theme(plot.title = element_text(hjust = 0.5))
+    #作出驶出订单情况并叠加密度曲线
+   d<-list(c,p)
+   d
+   #输出为一张列表，包含高峰时期以及一张关系图
+   }
+  else{
+    return(-1)
+    #后面的处理中-1可以帮我们识别哪些站点的利用率很低
+  }
+}#函数结束
+  day_in(1,35)#测试35号站点4月1号的订单情况
+```
+
+根据上面的函数，我们可以来估计一个站点在4月份的驶入高峰。我们将这个站点每一天的驶入高峰收集下来进行绘制直方图，密度曲线上的最大值对应的时间点就是高峰时期的一个很好的估计。
+
+```{r}
+peak_in<-function(n){
+#站点n在4月份的驶入高峰统计
+   c<-numeric(1000)
+   j=1
+   for(i in 1:30){
+     d<-day_in(i,n)
+      if(length(d)==2){
+        for(k in 1:length(d[[1]])){
+          c[j+k-1]<- d[[1]][k]
+          #记录下每一个高峰值出现的时间
+    }
+      j<-j+length(d[[1]])
+    }
+  }
+  if(length(which(c!=0))>3){
+    #只有在一个月内多次出现高峰我们才加以处理
+    c<-c[which(c!=0)]
+    u<-data.frame(c)
+
+    d<-density(u$c)
+    maxDens <- which.max(d$y)
+    v<-d$x[maxDens]
+    #寻找到密度曲线的最大点，这就是一个月内出现最多的高峰点，我们有理由相信这就是这个站点的出行高峰时间段
+    p<-ggplot(u,aes(x=c))+
+    geom_histogram(aes(y=..density..),color="black",fill="white")+
+    geom_density(alpha=0.2,fill="green")+
+    geom_vline(xintercept = d$x[maxDens],colour="red",linetype="dashed") 
+    #画出高峰的分布图并叠加密度曲线
+    e<-list(v,p)
+    e
+    #输出为一张列表，包含高峰时期以及一张关系图
+}
+else{
+  return(-1)
+  #返回-1说明没有高峰点，可以认为这个站点利用率低
+ }
+}
+peak_in(35)#测试35号站点
+```
+
+下面我们考虑该区域站点的整体出行情况。
+
+```{r}
+peakin<-numeric(length(z))
+peakout<-numeric(length(z))
+
+for(i in 1:length(z)){
+  peakin[i]<-peak_in(z[i])[[1]][1]
+  peakout[i]<-peak_out(z[i])[[1]][1]
+}
+
+summary(peakin)
+summary(peakout)
+```
+
+上面我们得到了35号及其周围站点的驶入驶出情况。我们可以看到驶入高峰没有驶出高峰那么集中，但总体而言还是在一个时间段内。下面我们分别讨论。
+
+对于驶出情况：
+
+```{r}
+d<-data.frame(peakout)
+ggplot(d,aes(x=peakout))+
+geom_histogram(aes(y=..density..),color="black",fill="white")+
+geom_density(alpha=0.2,fill="green")
+```
+
+我们可以明显看出该地区的出行高峰集中在下午4点30前后10分钟内，因此我们可以建议该地区居民尽可能避开该出行高峰选择出行时间。我们也可以建议政府部门在该时间段内安排员工适当增补车辆，防止出现用车无车的情况。
+
+对于驶入情况：
+
+```{r}
+d<-data.frame(peakin)
+ggplot(d,aes(x=peakin))+
+geom_histogram(aes(y=..density..),color="black",fill="white")+
+geom_density(alpha=0.2,fill="green")
+```
+
+虽然没有驶出情况明显，但我们可以看出主要的高峰还是在4点30前后10分钟内，这与驶出的高峰相契合。我们也可以由此断言4点30将是该区域的出行高峰时段，因此该地区居民可以尽量避开高峰，有计划的出行。
+
+### 任务七
+
+对订单数与站点车位数量的关系进行检验。
+
+我们很容易想到订单数与车位数之间有着非常重要的关系，但是具体关系如何，我们将在下面的讨论中得到详细的解答。
+
+首先我们得到关于车位数的具体分布。
+
+```{r}
+ggplot(Station,aes(x=Station$dpcapacity),group=1)+
+geom_histogram(aes(y=..density..),color="black",fill="white")+
+geom_density(alpha=0.2,fill="green")+
+xlab("车位数")+ylab("密度")+
+ggtitle("站点的车位数的分布") +
+theme(plot.title = element_text(hjust = 0.5))
+```
+
+我们可以明显看出车位数集中分布在10到20之间，大量的站点车位数为15左右。我们对于站点的分布有了一个初步的把握，下面我们考虑站点数与订单数量之间的关系。
+
+```{r}
+length_2<-length(Station$id)
+Trip_sum<-numeric(length_2)
+#统计每个站点的总订单数
+for(i in 1:length_2){
+  Trip_sum[i]<-length(which(Trip$from_station_id==Station$id[i]|Trip$to_station_id==Station$id[i]))
+}
+
+Station_1<-cbind.data.frame(Station,Trip_sum)
+
+ggplot(Station_1,aes(x=Station_1$dpcapacity,y=Station_1$Trip_sum))+
+  geom_point()+
+  geom_jitter(alpha=1/20)+
+  geom_smooth(method = 'lm',color='red')+
+  xlab("车位数")+ylab("总订单数")+
+  ggtitle("站点的车位数与订单数量关系图") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+with(Station_1,cor.test(Station_1$dpcapacity,Station_1$Trip_sum,method = 'pearson'))
+```
+
+根据图形我们可以看出车位数与总订单数呈现正相关的关系，根据对于相关性的检验，我们得到它们的相关系数大概在0.7，说明两者关系接近非常紧密。
+
+下面我们想到了站点的利用率。我们定义一个站点的利用系数为一个月内出行总订单的数量与所拥有车位数的比值再除以30。我们可以粗略的认为该系数可以反映站点内每辆车的日平均使用次数。如果一个站点车辆日平均使用次数小于0.5，我们可以认为该站点是利用率低的。同样的如果一个站点车子的日平均使用次数超过3，就认为该站点利用率较高，需要投放车辆，加以维护。我们首先对利用系数的分布有一个初步的掌握：
+
+```{r}
+userate<-numeric(length_2)
+
+for(i in 1:length_2){
+  userate[i]<-Trip_sum[i]/(Station$dpcapacity[i]*30)
+}#定义利用系数并计算
+
+summary(userate)#掌握大概的信息
+
+Station_2<-cbind.data.frame(Station,userate)
+
+ggplot(Station_2,aes(x=Station_2$userate))+
+geom_histogram(aes(y=..density..),color="black",fill="white")+
+geom_density(alpha=0.2,fill="green")+
+xlab("利用系数")+ylab("密度")+
+ggtitle("站点的利用系数的分布") +
+theme(plot.title = element_text(hjust = 0.5))+
+geom_vline(xintercept = 0.5,colour="red",linetype="dashed")+
+geom_vline(xintercept = 3,colour="red",linetype="dashed") 
+#画出站点的利用系数的分布，叠加密度曲线以及两条分界线
+```
+
+我们可以看到有大量的站点车辆的利用率较低，这些站点的存在是对公共资源的浪费，而还有一部分站点利用率很高，我们应该增加它们的车位，更加方便居民的出行。建议如下：
+
+```{r}
+low<-Station$id[which(userate<0.5)]
+cat("由此我们可以看出\n", low,"\n以上这",length(low),"个站点利用率较低，可以适当减少车位，调整车辆到利用率高的站点，适当减少这些站点的维护成本。")
+
+high<-Station$id[which(userate>3)]
+cat("由此我们可以看出\n", high,"\n以上这",length(high),"个站点利用率较高，可以适当增加车位，调动人力加快车辆循环，适当增加这些站点的维护成本。")
+
+```
+
+
+
+
